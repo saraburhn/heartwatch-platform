@@ -9,16 +9,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
 
+os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
-
-# 🔹 مدة حفظ الجلسة عند اختيار Remember me
 app.permanent_session_lifetime = dt.timedelta(days=7)
 
 # -------------------- DATABASE --------------------
 def get_db():
     if "db" not in g:
-        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
     return g.db
@@ -26,13 +25,12 @@ def get_db():
 @app.teardown_appcontext
 def close_db(exception=None):
     db = g.pop("db", None)
-    if db is not None:
+    if db:
         db.close()
 
 def init_db():
     db = get_db()
-    db.executescript(
-        """
+    db.executescript("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
@@ -47,8 +45,7 @@ def init_db():
             bpm INTEGER NOT NULL,
             label INTEGER,
             status TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS contacts (
@@ -57,8 +54,7 @@ def init_db():
             name TEXT NOT NULL,
             phone TEXT,
             email TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            created_at TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS alerts (
@@ -68,15 +64,13 @@ def init_db():
             bpm INTEGER NOT NULL,
             location TEXT,
             recipients TEXT,
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(user_id) REFERENCES users(id)
+            created_at TEXT NOT NULL
         );
-        """
-    )
+    """)
     db.commit()
 
 @app.before_request
-def _ensure_db():
+def before():
     init_db()
 
 # -------------------- AUTH --------------------
@@ -92,16 +86,15 @@ def current_user():
     uid = session.get("user_id")
     if not uid:
         return None
-    db = get_db()
-    return db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
+    return get_db().execute(
+        "SELECT * FROM users WHERE id=?", (uid,)
+    ).fetchone()
 
 # -------------------- LOGIC --------------------
-def detect_status(bpm, recent_bpms=None):
+def detect_status(bpm, recent=None):
     if bpm > 150:
         return "critical"
     if bpm < 45 or bpm > 120:
-        if recent_bpms and sum(1 for x in recent_bpms[-2:] if (x < 45 or x > 120)) >= 2:
-            return "critical"
         return "abnormal"
     return "normal"
 
@@ -113,50 +106,41 @@ def index():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
+        email = request.form["email"].lower()
+        password = request.form["password"]
 
-        if not email or not password:
-            flash("Email and password are required.", "danger")
-            return redirect(url_for("register"))
-
-        db = get_db()
         try:
-            db.execute(
+            get_db().execute(
                 "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
                 (email, generate_password_hash(password), dt.datetime.utcnow().isoformat())
             )
-            db.commit()
-        except sqlite3.IntegrityError:
-            flash("Email already registered.", "warning")
-            return redirect(url_for("register"))
-
-        flash("Account created. Please login.", "success")
-        return redirect(url_for("login"))
+            get_db().commit()
+            flash("Account created. Please login.", "success")
+            return redirect(url_for("login"))
+        except:
+            flash("Email already exists.", "danger")
 
     return render_template("register.html")
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        password = request.form.get("password", "")
+        email = request.form["email"].lower()
+        password = request.form["password"]
         remember = request.form.get("remember")
 
-        db = get_db()
-        user = db.execute(
-            "SELECT * FROM users WHERE email = ?", (email,)
+        user = get_db().execute(
+            "SELECT * FROM users WHERE email=?", (email,)
         ).fetchone()
 
-        if user is None or not check_password_hash(user["password_hash"], password):
-            flash("Invalid email or password.", "danger")
+        if not user or not check_password_hash(user["password_hash"], password):
+            flash("Invalid credentials.", "danger")
             return redirect(url_for("login"))
 
         session.clear()
         session["user_id"] = user["id"]
         session.permanent = True if remember else False
 
-        flash("Logged in successfully.", "success")
         return redirect(url_for("dashboard"))
 
     return render_template("login.html")
@@ -164,23 +148,22 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    flash("Logged out.", "info")
     return redirect(url_for("index"))
 
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    db = get_db()
     uid = session["user_id"]
+    db = get_db()
 
     latest = db.execute(
         "SELECT * FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1", (uid,)
     ).fetchone()
 
     recent = db.execute(
-        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 50", (uid,)
+        "SELECT ts,bpm,status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 50",
+        (uid,)
     ).fetchall()
-    recent_list = list(reversed([dict(r) for r in recent]))
 
     contacts = db.execute(
         "SELECT * FROM contacts WHERE user_id=?", (uid,)
@@ -189,75 +172,54 @@ def dashboard():
     return render_template(
         "dashboard.html",
         latest=latest,
-        recent=recent_list,
+        recent=recent,
         contacts=contacts
     )
 
 @app.route("/simulate", methods=["POST"])
 @login_required
 def simulate():
-    db = get_db()
+    bpm = random.randint(60, 180)
+    status = detect_status(bpm)
+
+    get_db().execute(
+        "INSERT INTO readings (user_id, ts, bpm, status, created_at) VALUES (?, ?, ?, ?, ?)",
+        (session["user_id"], dt.datetime.utcnow().isoformat(), bpm, status, dt.datetime.utcnow().isoformat())
+    )
+    get_db().commit()
+
+    return redirect(url_for("dashboard"))
+
+@app.route("/alert", methods=["POST"])
+@login_required
+def alert():
     uid = session["user_id"]
+    db = get_db()
 
-    last = db.execute(
-        "SELECT bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 5", (uid,)
-    ).fetchall()
-    last_bpms = [r["bpm"] for r in last]
+    latest = db.execute(
+        "SELECT bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1",
+        (uid,)
+    ).fetchone()
 
-    mode = request.form.get("mode", "normal")
-
-    if mode == "normal":
-        bpm = random.randint(60, 90)
-    elif mode == "abnormal":
-        bpm = random.choice([random.randint(121, 150), random.randint(35, 44)])
-    elif mode == "attack":
-        bpm = random.randint(155, 190)
-    else:
-        bpm = random.randint(40, 180)
-
-    status = detect_status(bpm, last_bpms)
+    if not latest:
+        flash("No data to send alert.", "warning")
+        return redirect(url_for("dashboard"))
 
     db.execute(
-        "INSERT INTO readings (user_id, ts, bpm, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (uid, dt.datetime.utcnow().isoformat(), bpm, None, status, dt.datetime.utcnow().isoformat())
+        "INSERT INTO alerts (user_id, ts, bpm, location, recipients, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            uid,
+            dt.datetime.utcnow().isoformat(),
+            latest["bpm"],
+            "Demo Location",
+            "Demo Contact",
+            dt.datetime.utcnow().isoformat()
+        )
     )
     db.commit()
 
-    flash(f"Simulated reading saved: {bpm} bpm ({status})", "success")
+    flash("🚨 Emergency alert sent (demo).", "danger")
     return redirect(url_for("dashboard"))
-
-@app.route("/upload", methods=["GET", "POST"])
-@login_required
-def upload():
-    if request.method == "POST":
-        file = request.files.get("file")
-        if not file:
-            flash("Please upload a CSV file.", "warning")
-            return redirect(url_for("upload"))
-
-        import csv
-        reader = csv.DictReader(file.read().decode("utf-8").splitlines())
-
-        db = get_db()
-        uid = session["user_id"]
-        inserted = 0
-
-        for row in reader:
-            bpm = int(row["bpm"])
-            ts = row["timestamp"]
-            status = detect_status(bpm)
-
-            db.execute(
-                "INSERT INTO readings (user_id, ts, bpm, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, ts, bpm, None, status, dt.datetime.utcnow().isoformat())
-            )
-            inserted += 1
-
-        db.commit()
-        flash(f"Uploaded successfully. Inserted {inserted} rows.", "success")
-        return redirect(url_for("dashboard"))
-
-    return render_template("upload.html")
 
 @app.route("/history")
 @login_required
@@ -266,12 +228,12 @@ def history():
     uid = session["user_id"]
 
     readings = db.execute(
-        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 200",
+        "SELECT ts,bpm,status FROM readings WHERE user_id=? ORDER BY ts DESC",
         (uid,)
     ).fetchall()
 
     alerts = db.execute(
-        "SELECT ts, bpm, location, recipients FROM alerts WHERE user_id=? ORDER BY ts DESC LIMIT 50",
+        "SELECT ts,bpm,location FROM alerts WHERE user_id=? ORDER BY ts DESC",
         (uid,)
     ).fetchall()
 
