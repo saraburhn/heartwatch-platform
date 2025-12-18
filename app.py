@@ -5,12 +5,10 @@ import random
 from functools import wraps
 from flask import Flask, g, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
-if os.path.exists("instance/heartwatch.db"):
-    os.remove("instance/heartwatch.db")
 
+# -------------------- APP & DB PATH --------------------
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
-
 os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 app = Flask(__name__)
@@ -72,10 +70,10 @@ def init_db():
     db.commit()
 
 @app.before_request
-def before():
+def before_request():
     init_db()
 
-# -------------------- AUTH --------------------
+# -------------------- AUTH HELPERS --------------------
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -93,7 +91,7 @@ def current_user():
     ).fetchone()
 
 # -------------------- LOGIC --------------------
-def detect_status(bpm, recent=None):
+def detect_status(bpm):
     if bpm > 150:
         return "critical"
     if bpm < 45 or bpm > 120:
@@ -108,8 +106,12 @@ def index():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        email = request.form["email"].lower()
-        password = request.form["password"]
+        email = request.form.get("email", "").lower()
+        password = request.form.get("password", "")
+
+        if not email or not password:
+            flash("Email and password required.", "danger")
+            return redirect(url_for("register"))
 
         try:
             get_db().execute(
@@ -119,16 +121,16 @@ def register():
             get_db().commit()
             flash("Account created. Please login.", "success")
             return redirect(url_for("login"))
-        except:
-            flash("Email already exists.", "danger")
+        except sqlite3.IntegrityError:
+            flash("Email already exists.", "warning")
 
     return render_template("register.html")
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form["email"].lower()
-        password = request.form["password"]
+        email = request.form.get("email", "").lower()
+        password = request.form.get("password", "")
         remember = request.form.get("remember")
 
         user = get_db().execute(
@@ -136,7 +138,7 @@ def login():
         ).fetchone()
 
         if not user or not check_password_hash(user["password_hash"], password):
-            flash("Invalid credentials.", "danger")
+            flash("Invalid email or password.", "danger")
             return redirect(url_for("login"))
 
         session.clear()
@@ -163,7 +165,7 @@ def dashboard():
     ).fetchone()
 
     recent = db.execute(
-        "SELECT ts,bpm,status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 50",
+        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 50",
         (uid,)
     ).fetchall()
 
@@ -204,7 +206,7 @@ def alert():
     ).fetchone()
 
     if not latest:
-        flash("No data to send alert.", "warning")
+        flash("No heart rate data available.", "warning")
         return redirect(url_for("dashboard"))
 
     db.execute(
@@ -226,16 +228,16 @@ def alert():
 @app.route("/history")
 @login_required
 def history():
-    db = get_db()
     uid = session["user_id"]
+    db = get_db()
 
     readings = db.execute(
-        "SELECT ts,bpm,status FROM readings WHERE user_id=? ORDER BY ts DESC",
+        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC",
         (uid,)
     ).fetchall()
 
     alerts = db.execute(
-        "SELECT ts,bpm,location FROM alerts WHERE user_id=? ORDER BY ts DESC",
+        "SELECT ts, bpm, location FROM alerts WHERE user_id=? ORDER BY ts DESC",
         (uid,)
     ).fetchall()
 
