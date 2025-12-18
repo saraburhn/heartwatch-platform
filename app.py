@@ -3,18 +3,7 @@ import sqlite3
 import datetime as dt
 import random
 from functools import wraps
-
-from flask import (
-    Flask,
-    g,
-    render_template,
-    request,
-    redirect,
-    url_for,
-    session,
-    flash,
-    send_from_directory,
-)
+from flask import Flask, g, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -23,7 +12,10 @@ DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
+# 🔹 مدة حفظ الجلسة عند اختيار Remember me
+app.permanent_session_lifetime = dt.timedelta(days=7)
 
+# -------------------- DATABASE --------------------
 def get_db():
     if "db" not in g:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -31,13 +23,11 @@ def get_db():
         g.db.row_factory = sqlite3.Row
     return g.db
 
-
 @app.teardown_appcontext
 def close_db(exception=None):
     db = g.pop("db", None)
     if db is not None:
         db.close()
-
 
 def init_db():
     db = get_db()
@@ -85,37 +75,18 @@ def init_db():
     )
     db.commit()
 
-
 @app.before_request
 def _ensure_db():
     init_db()
 
-
+# -------------------- AUTH --------------------
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if "user_id" not in session:
             return redirect(url_for("login"))
         return view(*args, **kwargs)
-
     return wrapped
-
-
-def detect_status(bpm: int, recent_bpms=None) -> str:
-    """Rule-based detection:
-    - normal: 45..120
-    - abnormal: <45 or 121..150
-    - critical: >150 OR repeated abnormal pattern
-    """
-    if bpm > 150:
-        return "critical"
-    if bpm < 45 or bpm > 120:
-        # if the last 2 readings were abnormal, elevate
-        if recent_bpms and sum(1 for x in recent_bpms[-2:] if (x < 45 or x > 120)) >= 2:
-            return "critical"
-        return "abnormal"
-    return "normal"
-
 
 def current_user():
     uid = session.get("user_id")
@@ -124,28 +95,27 @@ def current_user():
     db = get_db()
     return db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
 
+# -------------------- LOGIC --------------------
+def detect_status(bpm, recent_bpms=None):
+    if bpm > 150:
+        return "critical"
+    if bpm < 45 or bpm > 120:
+        if recent_bpms and sum(1 for x in recent_bpms[-2:] if (x < 45 or x > 120)) >= 2:
+            return "critical"
+        return "abnormal"
+    return "normal"
 
-@app.get("/healthz")
-def healthz():
-    return {"ok": True}
-
-
-# ✅ Download sample dataset from /data/sample_readings.csv
-@app.get("/sample-dataset")
-def sample_dataset():
-    return send_from_directory("data", "sample_readings.csv", as_attachment=True)
-
-
+# -------------------- ROUTES --------------------
 @app.route("/")
 def index():
     return render_template("index.html", user=current_user())
-
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
+
         if not email or not password:
             flash("Email and password are required.", "danger")
             return redirect(url_for("register"))
@@ -154,11 +124,11 @@ def register():
         try:
             db.execute(
                 "INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
-                (email, generate_password_hash(password), dt.datetime.utcnow().isoformat()),
+                (email, generate_password_hash(password), dt.datetime.utcnow().isoformat())
             )
             db.commit()
         except sqlite3.IntegrityError:
-            flash("This email is already registered.", "warning")
+            flash("Email already registered.", "warning")
             return redirect(url_for("register"))
 
         flash("Account created. Please login.", "success")
@@ -166,25 +136,30 @@ def register():
 
     return render_template("register.html")
 
-
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
+        remember = request.form.get("remember")
+
         db = get_db()
-        user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+        user = db.execute(
+            "SELECT * FROM users WHERE email = ?", (email,)
+        ).fetchone()
+
         if user is None or not check_password_hash(user["password_hash"], password):
             flash("Invalid email or password.", "danger")
             return redirect(url_for("login"))
 
         session.clear()
         session["user_id"] = user["id"]
+        session.permanent = True if remember else False
+
         flash("Logged in successfully.", "success")
         return redirect(url_for("dashboard"))
 
     return render_template("login.html")
-
 
 @app.route("/logout")
 def logout():
@@ -192,12 +167,12 @@ def logout():
     flash("Logged out.", "info")
     return redirect(url_for("index"))
 
-
 @app.route("/dashboard")
 @login_required
 def dashboard():
     db = get_db()
     uid = session["user_id"]
+
     latest = db.execute(
         "SELECT * FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1", (uid,)
     ).fetchone()
@@ -208,13 +183,15 @@ def dashboard():
     recent_list = list(reversed([dict(r) for r in recent]))
 
     contacts = db.execute(
-        "SELECT * FROM contacts WHERE user_id=? ORDER BY id DESC", (uid,)
+        "SELECT * FROM contacts WHERE user_id=?", (uid,)
     ).fetchall()
 
     return render_template(
-        "dashboard.html", latest=latest, recent=recent_list, contacts=contacts
+        "dashboard.html",
+        latest=latest,
+        recent=recent_list,
+        contacts=contacts
     )
-
 
 @app.route("/simulate", methods=["POST"])
 @login_required
@@ -222,12 +199,12 @@ def simulate():
     db = get_db()
     uid = session["user_id"]
 
-    last_bpms = db.execute(
+    last = db.execute(
         "SELECT bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 5", (uid,)
     ).fetchall()
-    last_bpms = [r["bpm"] for r in last_bpms]
+    last_bpms = [r["bpm"] for r in last]
 
-    mode = request.form.get("mode", "normal")  # normal/abnormal/attack/random
+    mode = request.form.get("mode", "normal")
 
     if mode == "normal":
         bpm = random.randint(60, 90)
@@ -236,86 +213,43 @@ def simulate():
     elif mode == "attack":
         bpm = random.randint(155, 190)
     else:
-        bpm = random.choices(
-            population=[
-                random.randint(60, 90),
-                random.randint(121, 150),
-                random.randint(35, 44),
-                random.randint(155, 190),
-            ],
-            weights=[0.90, 0.07, 0.02, 0.01],
-            k=1,
-        )[0]
+        bpm = random.randint(40, 180)
 
-    status = detect_status(bpm, recent_bpms=last_bpms)
-    ts = dt.datetime.utcnow().isoformat(sep=" ", timespec="seconds")
+    status = detect_status(bpm, last_bpms)
 
     db.execute(
         "INSERT INTO readings (user_id, ts, bpm, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (uid, ts, int(bpm), None, status, dt.datetime.utcnow().isoformat()),
+        (uid, dt.datetime.utcnow().isoformat(), bpm, None, status, dt.datetime.utcnow().isoformat())
     )
     db.commit()
 
-    flash(f"Simulated reading saved: {bpm} bpm ({status}).", "success")
+    flash(f"Simulated reading saved: {bpm} bpm ({status})", "success")
     return redirect(url_for("dashboard"))
-
 
 @app.route("/upload", methods=["GET", "POST"])
 @login_required
 def upload():
     if request.method == "POST":
         file = request.files.get("file")
-        if not file or file.filename == "":
-            flash("Please choose a CSV file.", "warning")
-            return redirect(url_for("upload"))
-
-        content = file.read().decode("utf-8", errors="ignore").splitlines()
-        if not content:
-            flash("Empty file.", "danger")
+        if not file:
+            flash("Please upload a CSV file.", "warning")
             return redirect(url_for("upload"))
 
         import csv
-
-        reader = csv.DictReader(content)
-        required = {"timestamp", "bpm"}
-        if not required.issubset(set([h.strip().lower() for h in reader.fieldnames or []])):
-            flash("CSV must include columns: timestamp, bpm (label optional).", "danger")
-            return redirect(url_for("upload"))
+        reader = csv.DictReader(file.read().decode("utf-8").splitlines())
 
         db = get_db()
         uid = session["user_id"]
         inserted = 0
 
-        last_bpms = db.execute(
-            "SELECT bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 5", (uid,)
-        ).fetchall()
-        last_bpms = [r["bpm"] for r in last_bpms]
-
         for row in reader:
-            ts = (row.get("timestamp") or "").strip()
-            bpm_raw = (row.get("bpm") or "").strip()
-            label_raw = (row.get("label") or "").strip()
-
-            if not ts or not bpm_raw:
-                continue
-            try:
-                bpm = int(float(bpm_raw))
-            except ValueError:
-                continue
-
-            status = detect_status(bpm, recent_bpms=last_bpms)
-            last_bpms.append(bpm)
-
-            label = None
-            if label_raw != "":
-                try:
-                    label = int(float(label_raw))
-                except ValueError:
-                    label = None
+            bpm = int(row["bpm"])
+            ts = row["timestamp"]
+            status = detect_status(bpm)
 
             db.execute(
                 "INSERT INTO readings (user_id, ts, bpm, label, status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (uid, ts, bpm, label, status, dt.datetime.utcnow().isoformat()),
+                (uid, ts, bpm, None, status, dt.datetime.utcnow().isoformat())
             )
             inserted += 1
 
@@ -325,98 +259,23 @@ def upload():
 
     return render_template("upload.html")
 
-
-@app.route("/contacts", methods=["GET", "POST"])
-@login_required
-def contacts():
-    db = get_db()
-    uid = session["user_id"]
-
-    if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        phone = request.form.get("phone", "").strip()
-        email = request.form.get("email", "").strip()
-        if not name:
-            flash("Contact name is required.", "warning")
-            return redirect(url_for("contacts"))
-        db.execute(
-            "INSERT INTO contacts (user_id, name, phone, email, created_at) VALUES (?, ?, ?, ?, ?)",
-            (uid, name, phone, email, dt.datetime.utcnow().isoformat()),
-        )
-        db.commit()
-        flash("Contact added.", "success")
-        return redirect(url_for("contacts"))
-
-    items = db.execute(
-        "SELECT * FROM contacts WHERE user_id=? ORDER BY id DESC", (uid,)
-    ).fetchall()
-    return render_template("contacts.html", contacts=items)
-
-
-@app.route("/contacts/delete/<int:cid>", methods=["POST"])
-@login_required
-def delete_contact(cid):
-    db = get_db()
-    uid = session["user_id"]
-    db.execute("DELETE FROM contacts WHERE id=? AND user_id=?", (cid, uid))
-    db.commit()
-    flash("Contact deleted.", "info")
-    return redirect(url_for("contacts"))
-
-
-@app.route("/alert", methods=["POST"])
-@login_required
-def alert():
-    db = get_db()
-    uid = session["user_id"]
-
-    latest = db.execute(
-        "SELECT * FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1", (uid,)
-    ).fetchone()
-    if latest is None:
-        flash("No reading available. Simulate or upload first.", "warning")
-        return redirect(url_for("dashboard"))
-
-    location = request.form.get("location", "GPS: 29.3759, 47.9774 (demo)")
-    contacts = db.execute(
-        "SELECT name, phone, email FROM contacts WHERE user_id=?", (uid,)
-    ).fetchall()
-    recipients = ", ".join(
-        [f"{c['name']}({c['phone'] or c['email'] or 'no-contact'})" for c in contacts]
-    ) or "No contacts saved"
-
-    db.execute(
-        "INSERT INTO alerts (user_id, ts, bpm, location, recipients, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (
-            uid,
-            dt.datetime.utcnow().isoformat(sep=" ", timespec="seconds"),
-            int(latest["bpm"]),
-            location,
-            recipients,
-            dt.datetime.utcnow().isoformat(),
-        ),
-    )
-    db.commit()
-
-    flash(f"🚨 Emergency alert simulated and saved. Recipients: {recipients}", "danger")
-    return redirect(url_for("dashboard"))
-
-
 @app.route("/history")
 @login_required
 def history():
     db = get_db()
     uid = session["user_id"]
+
     readings = db.execute(
-        "SELECT ts, bpm, status, label FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 200",
-        (uid,),
+        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 200",
+        (uid,)
     ).fetchall()
+
     alerts = db.execute(
         "SELECT ts, bpm, location, recipients FROM alerts WHERE user_id=? ORDER BY ts DESC LIMIT 50",
-        (uid,),
+        (uid,)
     ).fetchall()
-    return render_template("history.html", readings=readings, alerts=alerts)
 
+    return render_template("history.html", readings=readings, alerts=alerts)
 
 if __name__ == "__main__":
     app.run(debug=True)
