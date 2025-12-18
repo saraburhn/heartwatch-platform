@@ -1,11 +1,42 @@
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <title>HeartWatch</title>
-  </head>
-  <body style="font-family: Arial; padding: 20px;">
-    <h1>HeartWatch Platform is running ✅</h1>
-    <p>Welcome to the Smartwatch Heart Attack Detection demo.</p>
-  </body>
-</html>
+{% extends "base.html" %}
+{% block content %}
+<div class="p-4 p-md-5 bg-light rounded-3">
+  <h1 class="display-6 fw-bold">HeartWatch Platform ✅</h1>
+  <p class="lead mb-3">Smartwatch Heart Attack Detection demo (Flask + SQLite).</p>
+
+  {% if user %}
+    <p class="mb-3">Logged in as: <b>{{ user["email"] }}</b></p>
+    <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Go to Dashboard</a>
+  {% else %}
+    <a class="btn btn-dark me-2" href="{{ url_for('login') }}">Login</a>
+    <a class="btn btn-warning" href="{{ url_for('register') }}">Create Account</a>
+  {% endif %}
+</div>
+
+<div class="row mt-4 g-3">
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">✅ Login & Register</h5>
+        <p class="card-text">Accounts stored securely with hashed passwords.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">📈 Heart Rate Monitoring</h5>
+        <p class="card-text">Simulate readings or upload CSV dataset.</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">🚨 Emergency Alerts</h5>
+        <p class="card-text">Simulated alert + recipients list.</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
