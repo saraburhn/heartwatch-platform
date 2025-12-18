@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">Contacts</h2>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Add Contact</h5>
+        <form method="post" class="d-grid gap-2">
+          <input class="form-control" name="name" placeholder="Name" required>
+          <input class="form-control" name="phone" placeholder="Phone (optional)">
+          <input class="form-control" name="email" placeholder="Email (optional)">
+          <button class="btn btn-success">Add</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Saved Contacts</h5>
+
+        {% if contacts and contacts|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Phone</th>
+                  <th>Email</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+              {% for c in contacts %}
+                <tr>
+                  <td class="fw-bold">{{ c["name"] }}</td>
+                  <td>{{ c["phone"] or "" }}</td>
+                  <td>{{ c["email"] or "" }}</td>
+                  <td class="text-end">
+                    <form method="post" action="{{ url_for('delete_contact', cid=c['id']) }}">
+                      <button class="btn btn-outline-danger btn-sm">Delete</button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <p class="text-muted mb-0">No contacts saved.</p>
+        {% endif %}
+
+        <a class="btn btn-outline-secondary mt-2" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
