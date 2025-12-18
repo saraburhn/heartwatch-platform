@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">Dashboard</h2>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Latest Heart Rate</h5>
+        {% if latest %}
+          <div class="display-5 fw-bold">{{ latest["bpm"] }} bpm</div>
+          <span class="badge bg-{{ 'success' if latest['status']=='normal' else ('warning' if latest['status']=='abnormal' else 'danger') }}">
+            {{ latest["status"]|upper }}
+          </span>
+          <div class="text-muted mt-2">Time: {{ latest["ts"] }}</div>
+        {% else %}
+          <p class="text-muted">No readings yet. Simulate or upload.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="card-title">Simulate Heart Rate</h5>
+        <form method="post" action="{{ url_for('simulate') }}" class="d-grid gap-2">
+          <select class="form-select" name="mode">
+            <option value="normal">Normal</option>
+            <option value="abnormal">Abnormal</option>
+            <option value="attack">Attack</option>
+            <option value="random">Random</option>
+          </select>
+          <button class="btn btn-primary">Simulate & Save</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="card-title">Emergency Alert</h5>
+        <form method="post" action="{{ url_for('alert') }}" class="d-grid gap-2">
+          <input class="form-control" name="location" placeholder="Location (optional)">
+          <button class="btn btn-danger">Send Alert (Simulated)</button>
+        </form>
+        <div class="text-muted small mt-2">Tip: add contacts first so recipients appear.</div>
+      </div>
+    </div>
+
+    <div class="d-grid mt-3">
+      <a class="btn btn-outline-secondary" href="{{ url_for('upload') }}">Upload Dataset (CSV)</a>
+    </div>
+    <div class="d-grid mt-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('contacts') }}">Manage Contacts</a>
+    </div>
+  </div>
+
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title">Recent Readings (Chart)</h5>
+        <canvas id="hrChart" height="120"></canvas>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="card-title">Saved Contacts</h5>
+        {% if contacts and contacts|length > 0 %}
+          <ul class="list-group">
+            {% for c in contacts %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <div class="fw-bold">{{ c["name"] }}</div>
+                  <div class="text-muted small">{{ c["phone"] or "" }} {{ c["email"] or "" }}</div>
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="text-muted mb-0">No contacts yet.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const recent = {{ recent|tojson }};
+  const labels = recent.map(r => r.ts);
+  const data = recent.map(r => r.bpm);
+
+  const ctx = document.getElementById('hrChart');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{ label: 'BPM', data }]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        x: { ticks: { maxTicksLimit: 8 } }
+      }
+    }
+  });
+</script>
+{% endblock %}
