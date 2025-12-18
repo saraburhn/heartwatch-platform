@@ -4,9 +4,18 @@ import datetime as dt
 import random
 from functools import wraps
 
-from flask import Flask, g, render_template, request, redirect, url_for, session, flash
+from flask import (
+    Flask,
+    g,
+    render_template,
+    request,
+    redirect,
+    url_for,
+    session,
+    flash,
+    send_from_directory,
+)
 from werkzeug.security import generate_password_hash, check_password_hash
-
 
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
@@ -14,24 +23,12 @@ DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-# Avoid re-creating tables on EVERY request
-_DB_READY = False
-
 
 def get_db():
     if "db" not in g:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-
-        # Safer SQLite defaults
-        try:
-            conn.execute("PRAGMA foreign_keys = ON;")
-            conn.execute("PRAGMA busy_timeout = 3000;")
-        except Exception:
-            pass
-
-        g.db = conn
+        g.db = sqlite3.connect(DB_PATH)
+        g.db.row_factory = sqlite3.Row
     return g.db
 
 
@@ -90,11 +87,8 @@ def init_db():
 
 
 @app.before_request
-def _ensure_db_once():
-    global _DB_READY
-    if not _DB_READY:
-        init_db()
-        _DB_READY = True
+def _ensure_db():
+    init_db()
 
 
 def login_required(view):
@@ -108,20 +102,18 @@ def login_required(view):
 
 
 def detect_status(bpm: int, recent_bpms=None) -> str:
-    """
-    Rule-based detection:
+    """Rule-based detection:
     - normal: 45..120
     - abnormal: <45 or 121..150
     - critical: >150 OR repeated abnormal pattern
     """
     if bpm > 150:
         return "critical"
-
     if bpm < 45 or bpm > 120:
+        # if the last 2 readings were abnormal, elevate
         if recent_bpms and sum(1 for x in recent_bpms[-2:] if (x < 45 or x > 120)) >= 2:
             return "critical"
         return "abnormal"
-
     return "normal"
 
 
@@ -133,22 +125,15 @@ def current_user():
     return db.execute("SELECT * FROM users WHERE id = ?", (uid,)).fetchone()
 
 
-def _normalize_row_keys(row: dict) -> dict:
-    """Make CSV headers case-insensitive: {'Timestamp': '...'} -> {'timestamp': '...'}"""
-    return {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
-
-
-def _pick(row: dict, keys: list[str]) -> str:
-    for k in keys:
-        v = row.get(k, "")
-        if v != "":
-            return v
-    return ""
-
-
 @app.get("/healthz")
 def healthz():
-    return {"ok": True, "time": dt.datetime.utcnow().isoformat()}
+    return {"ok": True}
+
+
+# ✅ Download sample dataset from /data/sample_readings.csv
+@app.get("/sample-dataset")
+def sample_dataset():
+    return send_from_directory("data", "sample_readings.csv", as_attachment=True)
 
 
 @app.route("/")
@@ -187,7 +172,6 @@ def login():
     if request.method == "POST":
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-
         db = get_db()
         user = db.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
         if user is None or not check_password_hash(user["password_hash"], password):
@@ -214,7 +198,6 @@ def logout():
 def dashboard():
     db = get_db()
     uid = session["user_id"]
-
     latest = db.execute(
         "SELECT * FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1", (uid,)
     ).fetchone()
@@ -228,7 +211,9 @@ def dashboard():
         "SELECT * FROM contacts WHERE user_id=? ORDER BY id DESC", (uid,)
     ).fetchall()
 
-    return render_template("dashboard.html", latest=latest, recent=recent_list, contacts=contacts)
+    return render_template(
+        "dashboard.html", latest=latest, recent=recent_list, contacts=contacts
+    )
 
 
 @app.route("/simulate", methods=["POST"])
@@ -262,7 +247,7 @@ def simulate():
             k=1,
         )[0]
 
-    status = detect_status(int(bpm), recent_bpms=last_bpms)
+    status = detect_status(bpm, recent_bpms=last_bpms)
     ts = dt.datetime.utcnow().isoformat(sep=" ", timespec="seconds")
 
     db.execute(
@@ -284,27 +269,17 @@ def upload():
             flash("Please choose a CSV file.", "warning")
             return redirect(url_for("upload"))
 
-        raw = file.read().decode("utf-8", errors="ignore")
-        if not raw.strip():
+        content = file.read().decode("utf-8", errors="ignore").splitlines()
+        if not content:
             flash("Empty file.", "danger")
             return redirect(url_for("upload"))
 
         import csv
-        from io import StringIO
 
-        reader = csv.DictReader(StringIO(raw))
-
-        # Accept flexible headers (case-insensitive)
-        header_lower = {(h or "").strip().lower() for h in (reader.fieldnames or [])}
-        has_ts = any(x in header_lower for x in ["timestamp", "ts", "time", "datetime"])
-        has_bpm = any(x in header_lower for x in ["bpm", "heart_rate", "heartrate", "hr"])
-
-        if not (has_ts and has_bpm):
-            flash(
-                "CSV must include timestamp and bpm columns (case-insensitive). "
-                "Allowed examples: timestamp/ts/time + bpm/hr/heart_rate. (label optional)",
-                "danger",
-            )
+        reader = csv.DictReader(content)
+        required = {"timestamp", "bpm"}
+        if not required.issubset(set([h.strip().lower() for h in reader.fieldnames or []])):
+            flash("CSV must include columns: timestamp, bpm (label optional).", "danger")
             return redirect(url_for("upload"))
 
         db = get_db()
@@ -317,15 +292,12 @@ def upload():
         last_bpms = [r["bpm"] for r in last_bpms]
 
         for row in reader:
-            r = _normalize_row_keys(row)
-
-            ts = _pick(r, ["timestamp", "ts", "time", "datetime"])
-            bpm_raw = _pick(r, ["bpm", "hr", "heart_rate", "heartrate"])
-            label_raw = _pick(r, ["label"])
+            ts = (row.get("timestamp") or "").strip()
+            bpm_raw = (row.get("bpm") or "").strip()
+            label_raw = (row.get("label") or "").strip()
 
             if not ts or not bpm_raw:
                 continue
-
             try:
                 bpm = int(float(bpm_raw))
             except ValueError:
@@ -364,11 +336,9 @@ def contacts():
         name = request.form.get("name", "").strip()
         phone = request.form.get("phone", "").strip()
         email = request.form.get("email", "").strip()
-
         if not name:
             flash("Contact name is required.", "warning")
             return redirect(url_for("contacts"))
-
         db.execute(
             "INSERT INTO contacts (user_id, name, phone, email, created_at) VALUES (?, ?, ?, ?, ?)",
             (uid, name, phone, email, dt.datetime.utcnow().isoformat()),
@@ -380,7 +350,6 @@ def contacts():
     items = db.execute(
         "SELECT * FROM contacts WHERE user_id=? ORDER BY id DESC", (uid,)
     ).fetchall()
-
     return render_template("contacts.html", contacts=items)
 
 
@@ -389,10 +358,8 @@ def contacts():
 def delete_contact(cid):
     db = get_db()
     uid = session["user_id"]
-
     db.execute("DELETE FROM contacts WHERE id=? AND user_id=?", (cid, uid))
     db.commit()
-
     flash("Contact deleted.", "info")
     return redirect(url_for("contacts"))
 
@@ -410,12 +377,10 @@ def alert():
         flash("No reading available. Simulate or upload first.", "warning")
         return redirect(url_for("dashboard"))
 
-    location = request.form.get("location", "").strip() or "GPS: 29.3759, 47.9774 (demo)"
-
+    location = request.form.get("location", "GPS: 29.3759, 47.9774 (demo)")
     contacts = db.execute(
         "SELECT name, phone, email FROM contacts WHERE user_id=?", (uid,)
     ).fetchall()
-
     recipients = ", ".join(
         [f"{c['name']}({c['phone'] or c['email'] or 'no-contact'})" for c in contacts]
     ) or "No contacts saved"
@@ -442,17 +407,14 @@ def alert():
 def history():
     db = get_db()
     uid = session["user_id"]
-
     readings = db.execute(
         "SELECT ts, bpm, status, label FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 200",
         (uid,),
     ).fetchall()
-
     alerts = db.execute(
         "SELECT ts, bpm, location, recipients FROM alerts WHERE user_id=? ORDER BY ts DESC LIMIT 50",
         (uid,),
     ).fetchall()
-
     return render_template("history.html", readings=readings, alerts=alerts)
 
 
