@@ -5,6 +5,8 @@ import random
 from functools import wraps
 from flask import Flask, g, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
+if os.path.exists("instance/heartwatch.db"):
+    os.remove("instance/heartwatch.db")
 
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
