@@ -6,10 +6,9 @@ from functools import wraps
 from flask import Flask, g, render_template, request, redirect, url_for, session, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 
-# -------------------- APP & DB PATH --------------------
+# -------------------- APP SETUP --------------------
 APP_DIR = os.path.abspath(os.path.dirname(__file__))
 DB_PATH = os.path.join(APP_DIR, "instance", "heartwatch.db")
-os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -18,6 +17,7 @@ app.permanent_session_lifetime = dt.timedelta(days=7)
 # -------------------- DATABASE --------------------
 def get_db():
     if "db" not in g:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
     return g.db
@@ -43,7 +43,6 @@ def init_db():
             user_id INTEGER NOT NULL,
             ts TEXT NOT NULL,
             bpm INTEGER NOT NULL,
-            label INTEGER,
             status TEXT NOT NULL,
             created_at TEXT NOT NULL
         );
@@ -52,9 +51,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
             name TEXT NOT NULL,
-            phone TEXT,
-            email TEXT,
-            created_at TEXT NOT NULL
+            phone TEXT
         );
 
         CREATE TABLE IF NOT EXISTS alerts (
@@ -62,9 +59,7 @@ def init_db():
             user_id INTEGER NOT NULL,
             ts TEXT NOT NULL,
             bpm INTEGER NOT NULL,
-            location TEXT,
-            recipients TEXT,
-            created_at TEXT NOT NULL
+            location TEXT
         );
     """)
     db.commit()
@@ -73,7 +68,7 @@ def init_db():
 def before_request():
     init_db()
 
-# -------------------- AUTH HELPERS --------------------
+# -------------------- AUTH --------------------
 def login_required(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
@@ -86,9 +81,7 @@ def current_user():
     uid = session.get("user_id")
     if not uid:
         return None
-    return get_db().execute(
-        "SELECT * FROM users WHERE id=?", (uid,)
-    ).fetchone()
+    return get_db().execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
 
 # -------------------- LOGIC --------------------
 def detect_status(bpm):
@@ -106,12 +99,8 @@ def index():
 @app.route("/register", methods=["GET", "POST"])
 def register():
     if request.method == "POST":
-        email = request.form.get("email", "").lower()
-        password = request.form.get("password", "")
-
-        if not email or not password:
-            flash("Email and password required.", "danger")
-            return redirect(url_for("register"))
+        email = request.form["email"].lower().strip()
+        password = request.form["password"]
 
         try:
             get_db().execute(
@@ -119,18 +108,18 @@ def register():
                 (email, generate_password_hash(password), dt.datetime.utcnow().isoformat())
             )
             get_db().commit()
-            flash("Account created. Please login.", "success")
+            flash("Account created, login now.", "success")
             return redirect(url_for("login"))
         except sqlite3.IntegrityError:
-            flash("Email already exists.", "warning")
+            flash("Email already exists.", "danger")
 
     return render_template("register.html")
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        email = request.form.get("email", "").lower()
-        password = request.form.get("password", "")
+        email = request.form["email"].lower().strip()
+        password = request.form["password"]
         remember = request.form.get("remember")
 
         user = get_db().execute(
@@ -152,7 +141,7 @@ def login():
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("index"))
+    return redirect(url_for("login"))
 
 @app.route("/dashboard")
 @login_required
@@ -165,35 +154,36 @@ def dashboard():
     ).fetchone()
 
     recent = db.execute(
-        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 50",
-        (uid,)
-    ).fetchall()
-
-    contacts = db.execute(
-        "SELECT * FROM contacts WHERE user_id=?", (uid,)
+        "SELECT ts, bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 20", (uid,)
     ).fetchall()
 
     return render_template(
         "dashboard.html",
         latest=latest,
-        recent=recent,
-        contacts=contacts
+        recent=list(reversed(recent))
     )
 
 @app.route("/simulate", methods=["POST"])
 @login_required
 def simulate():
-    bpm = random.randint(60, 180)
+    bpm = random.randint(40, 180)
     status = detect_status(bpm)
 
     get_db().execute(
         "INSERT INTO readings (user_id, ts, bpm, status, created_at) VALUES (?, ?, ?, ?, ?)",
-        (session["user_id"], dt.datetime.utcnow().isoformat(), bpm, status, dt.datetime.utcnow().isoformat())
+        (
+            session["user_id"],
+            dt.datetime.utcnow().isoformat(),
+            bpm,
+            status,
+            dt.datetime.utcnow().isoformat()
+        )
     )
     get_db().commit()
 
     return redirect(url_for("dashboard"))
 
+# ✅ ✅ ✅ ALERT ROUTE (المشكلة كانت هون)
 @app.route("/alert", methods=["POST"])
 @login_required
 def alert():
@@ -201,47 +191,36 @@ def alert():
     db = get_db()
 
     latest = db.execute(
-        "SELECT bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1",
-        (uid,)
+        "SELECT bpm FROM readings WHERE user_id=? ORDER BY ts DESC LIMIT 1", (uid,)
     ).fetchone()
 
     if not latest:
-        flash("No heart rate data available.", "warning")
+        flash("No heart rate data.", "warning")
         return redirect(url_for("dashboard"))
 
     db.execute(
-        "INSERT INTO alerts (user_id, ts, bpm, location, recipients, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO alerts (user_id, ts, bpm, location) VALUES (?, ?, ?, ?)",
         (
             uid,
             dt.datetime.utcnow().isoformat(),
             latest["bpm"],
-            "Demo Location",
-            "Demo Contact",
-            dt.datetime.utcnow().isoformat()
+            "Demo Location"
         )
     )
     db.commit()
 
-    flash("🚨 Emergency alert sent (demo).", "danger")
+    flash("🚨 Emergency alert sent!", "danger")
     return redirect(url_for("dashboard"))
 
 @app.route("/history")
 @login_required
 def history():
     uid = session["user_id"]
-    db = get_db()
-
-    readings = db.execute(
-        "SELECT ts, bpm, status FROM readings WHERE user_id=? ORDER BY ts DESC",
-        (uid,)
+    alerts = get_db().execute(
+        "SELECT * FROM alerts WHERE user_id=? ORDER BY ts DESC", (uid,)
     ).fetchall()
+    return render_template("history.html", alerts=alerts)
 
-    alerts = db.execute(
-        "SELECT ts, bpm, location FROM alerts WHERE user_id=? ORDER BY ts DESC",
-        (uid,)
-    ).fetchall()
-
-    return render_template("history.html", readings=readings, alerts=alerts)
-
+# -------------------- RUN --------------------
 if __name__ == "__main__":
     app.run(debug=True)
