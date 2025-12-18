@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">History</h2>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <h5 class="card-title">Readings (latest 200)</h5>
+    <div class="table-responsive">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>BPM</th>
+            <th>Status</th>
+            <th>Label</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in readings %}
+          <tr>
+            <td>{{ r["ts"] }}</td>
+            <td class="fw-bold">{{ r["bpm"] }}</td>
+            <td>
+              <span class="badge bg-{{ 'success' if r['status']=='normal' else ('warning' if r['status']=='abnormal' else 'danger') }}">
+                {{ r["status"] }}
+              </span>
+            </td>
+            <td>{{ r["label"] if r["label"] is not none else "" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h5 class="card-title">Alerts (latest 50)</h5>
+    <div class="table-responsive">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>BPM</th>
+            <th>Location</th>
+            <th>Recipients</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in alerts %}
+          <tr>
+            <td>{{ a["ts"] }}</td>
+            <td class="fw-bold">{{ a["bpm"] }}</td>
+            <td>{{ a["location"] }}</td>
+            <td>{{ a["recipients"] }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}
