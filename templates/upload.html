@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="mb-3">Upload Dataset (CSV)</h2>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <p class="text-muted">
+      Required columns: <b>timestamp</b>, <b>bpm</b> (optional: label)
+    </p>
+
+    <form method="post" enctype="multipart/form-data" class="d-flex gap-2">
+      <input class="form-control" type="file" name="file" accept=".csv" required>
+      <button class="btn btn-primary">Upload</button>
+    </form>
+
+    <hr>
+    <p class="mb-1"><b>Example CSV:</b></p>
+    <pre class="bg-light p-3 rounded small">timestamp,bpm,label
+2025-01-01 10:00:00,78,0
+2025-01-01 10:01:00,132,1
+2025-01-01 10:02:00,165,1</pre>
+
+    <a class="btn btn-outline-secondary" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+  </div>
+</div>
+{% endblock %}
