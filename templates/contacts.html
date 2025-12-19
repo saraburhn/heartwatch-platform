@@ -1,61 +1,44 @@
 {% extends "base.html" %}
 {% block content %}
-<h2 class="mb-3">Contacts</h2>
 
-<div class="row g-3">
-  <div class="col-lg-5">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <h5 class="card-title">Add Contact</h5>
-        <form method="post" class="d-grid gap-2">
-          <input class="form-control" name="name" placeholder="Name" required>
-          <input class="form-control" name="phone" placeholder="Phone (optional)">
-          <input class="form-control" name="email" placeholder="Email (optional)">
-          <button class="btn btn-success">Add</button>
-        </form>
+<h2 class="mb-3">Manage Contacts</h2>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="post" action="{{ url_for('contacts') }}" class="row g-2">
+      <div class="col-md-4">
+        <input name="name" class="form-control" placeholder="Name" required>
       </div>
-    </div>
-  </div>
-
-  <div class="col-lg-7">
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <h5 class="card-title">Saved Contacts</h5>
-
-        {% if contacts and contacts|length > 0 %}
-          <div class="table-responsive">
-            <table class="table table-sm align-middle">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Phone</th>
-                  <th>Email</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-              {% for c in contacts %}
-                <tr>
-                  <td class="fw-bold">{{ c["name"] }}</td>
-                  <td>{{ c["phone"] or "" }}</td>
-                  <td>{{ c["email"] or "" }}</td>
-                  <td class="text-end">
-                    <form method="post" action="{{ url_for('delete_contact', cid=c['id']) }}">
-                      <button class="btn btn-outline-danger btn-sm">Delete</button>
-                    </form>
-                  </td>
-                </tr>
-              {% endfor %}
-              </tbody>
-            </table>
-          </div>
-        {% else %}
-          <p class="text-muted mb-0">No contacts saved.</p>
-        {% endif %}
-
-        <a class="btn btn-outline-secondary mt-2" href="{{ url_for('dashboard') }}">Back to Dashboard</a>
+      <div class="col-md-4">
+        <input name="phone" class="form-control" placeholder="Phone">
       </div>
-    </div>
+      <div class="col-md-4">
+        <input name="email" class="form-control" placeholder="Email">
+      </div>
+      <div class="col-12 d-grid mt-2">
+        <button class="btn btn-primary">Add Contact</button>
+      </div>
+    </form>
   </div>
 </div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h5>Saved Contacts</h5>
+
+    {% if contacts %}
+      <ul class="list-group">
+        {% for c in contacts %}
+          <li class="list-group-item">
+            <strong>{{ c.name }}</strong><br>
+            <small>{{ c.phone }} {{ c.email }}</small>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p class="text-muted">No contacts yet.</p>
+    {% endif %}
+  </div>
+</div>
+
 {% endblock %}
